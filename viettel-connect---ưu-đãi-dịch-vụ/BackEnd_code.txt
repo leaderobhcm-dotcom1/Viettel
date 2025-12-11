@@ -1,0 +1,198 @@
+// --- COPY TO GOOGLE APPS SCRIPT ---
+
+// Tên các Sheet
+var SHEET_PLANS = "Plans";
+var SHEET_LEADS = "Leads";
+var SHEET_CONFIG = "Config";
+
+function doGet(e) {
+  var action = e && e.parameter ? e.parameter.action : 'getAll';
+  
+  if (action == 'getAll') {
+    return ContentService.createTextOutput(JSON.stringify(getAllData()))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+  
+  return ContentService.createTextOutput(JSON.stringify({status: 'error', message: 'Invalid action'}))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function doPost(e) {
+  var lock = LockService.getScriptLock();
+  // Wait for up to 10 seconds for other concurrent requests to finish
+  lock.tryLock(10000);
+
+  try {
+    if (!e || !e.postData || !e.postData.contents) {
+       throw new Error("No post data received");
+    }
+
+    // Parse dữ liệu gửi lên (dạng text/plain để tránh preflight CORS)
+    var data = JSON.parse(e.postData.contents);
+    var action = data.action;
+    var result = {};
+    
+    if (action == 'addLead') {
+      result = addLead(data.payload);
+    } else if (action == 'updatePlan') {
+      result = updatePlan(data.payload);
+    } else if (action == 'updateLeadStatus') {
+      result = updateLeadStatus(data.id, data.status);
+    } else if (action == 'updateConfig') {
+      result = updateConfig(data.payload);
+    }
+    
+    return ContentService.createTextOutput(JSON.stringify({status: 'success', result: result}))
+      .setMimeType(ContentService.MimeType.JSON);
+      
+  } catch (err) {
+    return ContentService.createTextOutput(JSON.stringify({status: 'error', message: err.toString()}))
+      .setMimeType(ContentService.MimeType.JSON);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// --- HELPER FUNCTIONS ---
+
+function getAllData() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (!ss) throw new Error("Spreadsheet not found. Make sure script is bound to a sheet.");
+
+  // 1. Get Plans
+  var planSheet = ss.getSheetByName(SHEET_PLANS);
+  if (!planSheet) {
+    planSheet = ss.insertSheet(SHEET_PLANS);
+    planSheet.appendRow(["id", "name", "price", "period", "data", "speed", "calls", "features", "type", "hot"]);
+  }
+  var plans = getSheetData(planSheet);
+  
+  // 2. Get Leads
+  var leadSheet = ss.getSheetByName(SHEET_LEADS);
+  if (!leadSheet) {
+    leadSheet = ss.insertSheet(SHEET_LEADS);
+    leadSheet.appendRow(["id", "name", "phone", "service", "timestamp", "status"]);
+  }
+  var leads = getSheetData(leadSheet);
+  
+  // 3. Get Config
+  var configSheet = ss.getSheetByName(SHEET_CONFIG);
+  if (!configSheet) {
+    configSheet = ss.insertSheet(SHEET_CONFIG);
+    configSheet.appendRow(["key", "value"]);
+    configSheet.appendRow(["hotline", "1800 8098"]);
+    configSheet.appendRow(["website", "viettel.vn"]);
+    configSheet.appendRow(["address", "Số 1 Giang Văn Minh, HN"]);
+  }
+  var configData = configSheet.getDataRange().getValues();
+  var config = {};
+  for (var i = 1; i < configData.length; i++) {
+    config[configData[i][0]] = configData[i][1];
+  }
+  
+  return {
+    plans: plans,
+    leads: leads,
+    config: config
+  };
+}
+
+function addLead(lead) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(SHEET_LEADS);
+  sheet.appendRow([
+    lead.id,
+    lead.name,
+    lead.phone,
+    lead.service,
+    lead.timestamp,
+    lead.status
+  ]);
+  return lead;
+}
+
+function updatePlan(plan) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(SHEET_PLANS);
+  var data = sheet.getDataRange().getValues();
+  
+  // Find row by ID
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][0] == plan.id) {
+      // Update row
+      var featuresStr = JSON.stringify(plan.features);
+      // Ensure we update all 10 columns
+      sheet.getRange(i + 1, 1, 1, 10).setValues([[
+        plan.id,
+        plan.name,
+        plan.price,
+        plan.period,
+        plan.data || "",
+        plan.speed || "",
+        plan.calls || "",
+        featuresStr,
+        plan.type,
+        plan.hot
+      ]]);
+      return plan;
+    }
+  }
+  return null;
+}
+
+function updateLeadStatus(id, status) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(SHEET_LEADS);
+  var data = sheet.getDataRange().getValues();
+  
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][0] == id) { // ID column
+      sheet.getRange(i + 1, 6).setValue(status); // Status column (6th)
+      return {id: id, status: status};
+    }
+  }
+  return null;
+}
+
+function updateConfig(newConfig) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(SHEET_CONFIG);
+  var data = sheet.getDataRange().getValues();
+  
+  // Simple update: loop through existing keys
+  for (var i = 1; i < data.length; i++) {
+    var key = data[i][0];
+    if (newConfig[key]) {
+      sheet.getRange(i + 1, 2).setValue(newConfig[key]);
+    }
+  }
+  return newConfig;
+}
+
+function getSheetData(sheet) {
+  var data = sheet.getDataRange().getValues();
+  if (data.length <= 1) return []; // Only header row
+
+  var headers = data[0];
+  var result = [];
+  
+  for (var i = 1; i < data.length; i++) {
+    var row = data[i];
+    var obj = {};
+    for (var j = 0; j < headers.length; j++) {
+      var val = row[j];
+      // Try to parse JSON for features
+      if (headers[j] == 'features' && typeof val == 'string' && val.trim().startsWith('[')) {
+        try { val = JSON.parse(val); } catch(e) {}
+      }
+      obj[headers[j]] = val;
+    }
+    result.push(obj);
+  }
+  return result;
+}
+
+// Setup function to run once to initialize sheets
+function setup() {
+  getAllData();
+}
