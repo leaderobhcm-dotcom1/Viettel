@@ -1,0 +1,27 @@
+@import "tailwindcss";
+
+:root {
+  --viettel-red: #EE0033;
+  --viettel-dark: #CC002B;
+}
+
+.bg-viettel-red {
+  background-color: var(--viettel-red);
+}
+
+.bg-viettel-dark {
+  background-color: var(--viettel-dark);
+}
+
+.text-viettel-red {
+  color: var(--viettel-red);
+}
+
+.border-viettel-red {
+  border-color: var(--viettel-red);
+}
+
+.focus\:ring-red-100:focus {
+  --tw-ring-opacity: 1;
+  --tw-ring-color: rgb(254 226 226 / var(--tw-ring-opacity));
+}

@@ -1,196 +1,397 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { Plan, User, Lead, ContactConfig, Role } from '../types';
-import { PLANS as INITIAL_PLANS } from '../constants';
-
-const SHEET_API_URL = "https://script.google.com/macros/s/AKfycbx_nIXcqNfCHRMvfcXRNe0YLewg1vfG5gU4jRhnVloFZQH1R69L5zNLCAldThO57bNNRg/exec";
+import { Plan, Lead, User, ContactConfig, PlanType, News } from '../types';
+import { PLANS } from '../constants';
+import { supabase, isSupabaseConfigured } from '../supabase';
 
 interface AppContextType {
-  // Auth
   user: User | null;
-  login: (username: string, pass: string) => boolean;
+  login: (username: string, password: string) => Promise<boolean>;
   logout: () => void;
-  
-  // Data
   plans: Plan[];
-  updatePlan: (updatedPlan: Plan) => void;
-  
-  // Leads (Liên hệ khách hàng gửi)
   leads: Lead[];
-  addLead: (lead: Omit<Lead, 'id' | 'timestamp' | 'status'>) => void;
-  updateLeadStatus: (id: string, status: Lead['status']) => void;
-
-  // Contact Config (Thông tin liên hệ chung)
+  news: News[];
   contactConfig: ContactConfig;
-  updateContactConfig: (config: ContactConfig) => void;
-
-  // System
+  addLead: (lead: Omit<Lead, 'id' | 'timestamp' | 'status'>) => Promise<void>;
+  updateLeadStatus: (id: string, status: Lead['status']) => Promise<void>;
+  updateLeadNote: (id: string, note: string) => Promise<void>;
+  deleteLead: (id: string) => Promise<void>;
+  addPlan: (plan: Omit<Plan, 'id'>) => Promise<void>;
+  updatePlan: (plan: Plan) => Promise<void>;
+  deletePlan: (id: string) => Promise<void>;
+  addNews: (news: Omit<News, 'id' | 'created_at'>) => Promise<void>;
+  updateNews: (news: News) => Promise<void>;
+  deleteNews: (id: string) => Promise<void>;
+  updateConfig: (config: ContactConfig) => Promise<void>;
   isLoading: boolean;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // --- Auth State ---
-  // Initialize from LocalStorage if available
-  const [user, setUser] = useState<User | null>(() => {
-    try {
-      const savedUser = localStorage.getItem('viettel_user');
-      return savedUser ? JSON.parse(savedUser) : null;
-    } catch (e) {
-      return null;
-    }
-  });
-
-  const login = (username: string, pass: string): boolean => {
-    let userObj: User | null = null;
-    
-    // Mock authentication
-    if (username === 'admin' && pass === 'admin123') {
-      userObj = { username: 'admin', role: 'ADMIN', name: 'Quản Trị Viên' };
-    } else if (username === 'ctv' && pass === 'ctv123') {
-      userObj = { username: 'ctv', role: 'CTV', name: 'Cộng Tác Viên' };
-    }
-
-    if (userObj) {
-      setUser(userObj);
-      localStorage.setItem('viettel_user', JSON.stringify(userObj));
-      return true;
-    }
-    
-    return false;
-  };
-
-  const logout = () => {
-    setUser(null);
-    localStorage.removeItem('viettel_user');
-  };
-
-  // --- Data State ---
-  const [plans, setPlans] = useState<Plan[]>(INITIAL_PLANS);
+  const [user, setUser] = useState<User | null>(null);
+  const [plans, setPlans] = useState<Plan[]>(PLANS);
   const [leads, setLeads] = useState<Lead[]>([]);
+  const [news, setNews] = useState<News[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [contactConfig, setContactConfig] = useState<ContactConfig>({
     hotline: '1800 8098',
     website: 'viettel.vn',
-    address: 'Số 1 Giang Văn Minh, P Kim Mã, Q Ba Đình, TP Hà Nội.'
+    address: 'Số 1 Giang Văn Minh, Kim Mã, Ba Đình, Hà Nội'
   });
-  const [isLoading, setIsLoading] = useState(true);
 
-  // --- API Helper ---
-  // Fix for "Failed to fetch":
-  // 1. method: POST
-  // 2. credentials: omit (prevents auth conflicts)
-  // 3. referrerPolicy: no-referrer (prevents some browser blocking on redirects)
-  // 4. Content-Type: text/plain (avoids CORS preflight)
-  const sendToSheet = async (action: string, payload: any) => {
+  // Handle Auth State Changes
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+
+    // Check current session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) {
+        fetchProfile(session.user.id);
+      }
+    });
+
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user) {
+        fetchProfile(session.user.id);
+      } else {
+        setUser(null);
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const fetchProfile = async (userId: string) => {
     try {
-      await fetch(SHEET_API_URL, {
-        method: 'POST',
-        mode: 'cors',
-        credentials: 'omit',
-        redirect: 'follow',
-        referrerPolicy: 'no-referrer',
-        headers: { "Content-Type": "text/plain" }, 
-        body: JSON.stringify({ action, ...payload })
-      });
-      console.log(`Synced ${action} to sheet`);
-    } catch (error) {
-      console.error(`Failed to sync ${action}`, error);
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', userId)
+        .single();
+      
+      if (data && !error) {
+        setUser({
+          username: data.username,
+          role: data.role as 'ADMIN' | 'USER',
+          name: data.full_name
+        });
+      }
+    } catch (err) {
+      console.error('Error fetching profile:', err);
     }
   };
 
-  // --- Initial Fetch ---
+  // Fetch initial data from Supabase
   useEffect(() => {
+    if (!isSupabaseConfigured) {
+      setIsLoading(false);
+      return;
+    }
+
     const fetchData = async () => {
+      setIsLoading(true);
       try {
-        // Add timestamp to prevent caching
-        const response = await fetch(`${SHEET_API_URL}?action=getAll&t=${Date.now()}`, {
-          method: 'GET',
-          mode: 'cors',
-          credentials: 'omit',
-          redirect: 'follow',
-          referrerPolicy: 'no-referrer',
-        });
+        // Fetch Plans
+        const { data: plansData, error: plansError } = await supabase
+          .from('plans')
+          .select('*')
+          .order('created_at', { ascending: true });
         
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
+        if (plansData && !plansError) {
+          setPlans(plansData as Plan[]);
         }
 
-        const data = await response.json();
+        // Fetch Config
+        const { data: configData, error: configError } = await supabase
+          .from('config')
+          .select('*');
         
-        if (data.status === 'error') {
-           console.error("Sheet API Error:", data.message);
-           return;
+        if (configData && !configError) {
+          const configObj: any = {};
+          configData.forEach(item => {
+            configObj[item.key] = item.value;
+          });
+          if (Object.keys(configObj).length > 0) {
+            setContactConfig(configObj as ContactConfig);
+          }
         }
 
-        if (data.plans && data.plans.length > 0) {
-          // Normalize features if they came back as strings instead of arrays from a raw fetch
-          const normalizedPlans = data.plans.map((p: any) => ({
-            ...p,
-            features: typeof p.features === 'string' ? JSON.parse(p.features) : (Array.isArray(p.features) ? p.features : [])
+        // Fetch Leads
+        console.log('Fetching leads, user authenticated:', !!user);
+        const { data: leadsData, error: leadsError } = await supabase
+          .from('leads')
+          .select('*')
+          .order('timestamp', { ascending: false });
+        
+        if (leadsData && !leadsError) {
+          console.log('Leads fetched successfully:', leadsData.length);
+          // Ensure timestamp is a number (Supabase BIGINT can come as string)
+          const formattedLeads = leadsData.map(lead => ({
+            ...lead,
+            timestamp: typeof lead.timestamp === 'string' ? parseInt(lead.timestamp, 10) : Number(lead.timestamp)
           }));
-          setPlans(normalizedPlans);
-        }
-        
-        if (data.leads && Array.isArray(data.leads)) {
-          setLeads(data.leads.sort((a: Lead, b: Lead) => b.timestamp - a.timestamp));
+          setLeads(formattedLeads as Lead[]);
+        } else if (leadsError) {
+          console.error('Error fetching leads:', leadsError);
         }
 
-        if (data.config && data.config.hotline) {
-          setContactConfig(data.config);
+        // Fetch News
+        const { data: newsData, error: newsError } = await supabase
+          .from('news')
+          .select('*')
+          .order('created_at', { ascending: false });
+        
+        if (newsData && !newsError) {
+          setNews(newsData as News[]);
         }
-      } catch (error) {
-        console.error("Error fetching data from Sheet:", error);
-        console.warn("Please ensure the Google Script is deployed as 'Web App' -> 'Who has access: Anyone'");
-        // Keep initial state (constants) if fetch fails
+      } catch (err) {
+        console.error('Error fetching data from Supabase:', err);
       } finally {
         setIsLoading(false);
       }
     };
 
     fetchData();
-  }, []);
 
-  // --- Actions ---
+    // Set up real-time subscription for leads
+    const leadsSubscription = supabase
+      .channel('leads-channel')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'leads' }, (payload) => {
+        if (payload.eventType === 'INSERT') {
+          setLeads(prev => [payload.new as Lead, ...prev]);
+        } else if (payload.eventType === 'UPDATE') {
+          setLeads(prev => prev.map(l => l.id === payload.new.id ? payload.new as Lead : l));
+        } else if (payload.eventType === 'DELETE') {
+          setLeads(prev => prev.filter(l => l.id !== payload.old.id));
+        }
+      })
+      .subscribe();
 
-  const updatePlan = (updatedPlan: Plan) => {
-    // 1. Optimistic Update (Immediate UI change)
-    setPlans(prev => prev.map(p => p.id === updatedPlan.id ? updatedPlan : p));
-    
-    // 2. Sync to Backend
-    sendToSheet('updatePlan', { payload: updatedPlan });
+    return () => {
+      supabase.removeChannel(leadsSubscription);
+    };
+  }, [user, isSupabaseConfigured]);
+
+  // Login with Supabase Auth
+  const login = async (email: string, password: string) => {
+    if (!isSupabaseConfigured) {
+      // Fallback for demo if not configured
+      if (email === 'admin@viettel.vn' && password === 'admin123') {
+        setUser({ username: 'admin', role: 'ADMIN', name: 'Quản trị viên' });
+        return true;
+      }
+      return false;
+    }
+
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (error) {
+      console.error('Login error:', error.message);
+      return false;
+    }
+
+    return !!data.user;
   };
 
-  const addLead = (leadData: Omit<Lead, 'id' | 'timestamp' | 'status'>) => {
-    const newLead: Lead = {
-      ...leadData,
-      id: Date.now().toString(),
+  const logout = async () => {
+    if (isSupabaseConfigured) {
+      await supabase.auth.signOut();
+    }
+    setUser(null);
+  };
+
+  const addLead = async (newLeadData: Omit<Lead, 'id' | 'timestamp' | 'status'>) => {
+    const newLead = {
+      ...newLeadData,
       timestamp: Date.now(),
       status: 'new'
     };
-    
-    // 1. Optimistic Update
-    setLeads(prev => [newLead, ...prev]);
-    
-    // 2. Sync to Backend
-    sendToSheet('addLead', { payload: newLead });
+
+    if (isSupabaseConfigured) {
+      const { error } = await supabase
+        .from('leads')
+        .insert([newLead]);
+
+      if (error) {
+        console.error('Error adding lead to Supabase:', error);
+        setLeads(prev => [{ ...newLead, id: Math.random().toString() } as Lead, ...prev]);
+      }
+    } else {
+      setLeads(prev => [{ ...newLead, id: Math.random().toString() } as Lead, ...prev]);
+    }
   };
 
-  const updateLeadStatus = (id: string, status: Lead['status']) => {
+  const updateLeadStatus = async (id: string, status: Lead['status']) => {
+    // Optimistic update
     setLeads(prev => prev.map(l => l.id === id ? { ...l, status } : l));
-    sendToSheet('updateLeadStatus', { id, status });
+
+    if (isSupabaseConfigured) {
+      const { error } = await supabase
+        .from('leads')
+        .update({ status })
+        .eq('id', id);
+
+      if (error) {
+        console.error('Error updating lead status in Supabase:', error);
+        // Revert on error if needed, but for now just log
+      }
+    }
   };
 
-  const updateContactConfig = (config: ContactConfig) => {
-    setContactConfig(config);
-    sendToSheet('updateConfig', { payload: config });
+  const updateLeadNote = async (id: string, note: string) => {
+    // Optimistic update
+    setLeads(prev => prev.map(l => l.id === id ? { ...l, note } : l));
+
+    if (isSupabaseConfigured) {
+      const { error } = await supabase
+        .from('leads')
+        .update({ note })
+        .eq('id', id);
+
+      if (error) {
+        console.error('Error updating lead note in Supabase:', error);
+      }
+    }
+  };
+
+  const deleteLead = async (id: string) => {
+    // Optimistic update
+    setLeads(prev => prev.filter(l => l.id !== id));
+
+    if (isSupabaseConfigured) {
+      const { error } = await supabase
+        .from('leads')
+        .delete()
+        .eq('id', id);
+
+      if (error) {
+        console.error('Error deleting lead from Supabase:', error);
+      }
+    }
+  };
+
+  const addPlan = async (newPlanData: Omit<Plan, 'id'>) => {
+    const id = Math.random().toString(36).substr(2, 9);
+    const newPlan = { ...newPlanData, id };
+
+    if (isSupabaseConfigured) {
+      const { error } = await supabase
+        .from('plans')
+        .insert([newPlan]);
+
+      if (error) {
+        console.error('Error adding plan to Supabase:', error);
+        setPlans(prev => [...prev, newPlan as Plan]);
+      } else {
+        setPlans(prev => [...prev, newPlan as Plan]);
+      }
+    } else {
+      setPlans(prev => [...prev, newPlan as Plan]);
+    }
+  };
+
+  const updatePlan = async (updatedPlan: Plan) => {
+    if (isSupabaseConfigured) {
+      const { error } = await supabase
+        .from('plans')
+        .update(updatedPlan)
+        .eq('id', updatedPlan.id);
+
+      if (error) {
+        console.error('Error updating plan in Supabase:', error);
+        setPlans(prev => prev.map(p => p.id === updatedPlan.id ? updatedPlan : p));
+      } else {
+        setPlans(prev => prev.map(p => p.id === updatedPlan.id ? updatedPlan : p));
+      }
+    } else {
+      setPlans(prev => prev.map(p => p.id === updatedPlan.id ? updatedPlan : p));
+    }
+  };
+
+  const deletePlan = async (id: string) => {
+    if (isSupabaseConfigured) {
+      const { error } = await supabase
+        .from('plans')
+        .delete()
+        .eq('id', id);
+
+      if (error) {
+        console.error('Error deleting plan from Supabase:', error);
+        setPlans(prev => prev.filter(p => p.id !== id));
+      } else {
+        setPlans(prev => prev.filter(p => p.id !== id));
+      }
+    } else {
+      setPlans(prev => prev.filter(p => p.id !== id));
+    }
+  };
+
+  const updateConfig = async (newConfig: ContactConfig) => {
+    if (isSupabaseConfigured) {
+      const updates = Object.entries(newConfig).map(([key, value]) => 
+        supabase.from('config').upsert({ key, value })
+      );
+      await Promise.all(updates);
+    }
+    setContactConfig(newConfig);
+  };
+
+  const addNews = async (newsData: Omit<News, 'id' | 'created_at'>) => {
+    if (isSupabaseConfigured) {
+      const { data, error } = await supabase
+        .from('news')
+        .insert([newsData])
+        .select();
+
+      if (!error && data) {
+        setNews(prev => [data[0] as News, ...prev]);
+      }
+    } else {
+      const newNews = { ...newsData, id: Math.random().toString(), created_at: new Date().toISOString() };
+      setNews(prev => [newNews as News, ...prev]);
+    }
+  };
+
+  const updateNews = async (updatedNews: News) => {
+    if (isSupabaseConfigured) {
+      const { error } = await supabase
+        .from('news')
+        .update(updatedNews)
+        .eq('id', updatedNews.id);
+
+      if (!error) {
+        setNews(prev => prev.map(n => n.id === updatedNews.id ? updatedNews : n));
+      }
+    } else {
+      setNews(prev => prev.map(n => n.id === updatedNews.id ? updatedNews : n));
+    }
+  };
+
+  const deleteNews = async (id: string) => {
+    if (isSupabaseConfigured) {
+      const { error } = await supabase
+        .from('news')
+        .delete()
+        .eq('id', id);
+
+      if (!error) {
+        setNews(prev => prev.filter(n => n.id !== id));
+      }
+    } else {
+      setNews(prev => prev.filter(n => n.id !== id));
+    }
   };
 
   return (
     <AppContext.Provider value={{
-      user, login, logout,
-      plans, updatePlan,
-      leads, addLead, updateLeadStatus,
-      contactConfig, updateContactConfig,
+      user, login, logout, plans, leads, news, contactConfig,
+      addLead, updateLeadStatus, updateLeadNote, deleteLead, addPlan, updatePlan, deletePlan, 
+      addNews, updateNews, deleteNews,
+      updateConfig,
       isLoading
     }}>
       {children}
@@ -200,6 +401,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
 export const useApp = () => {
   const context = useContext(AppContext);
-  if (!context) throw new Error('useApp must be used within AppProvider');
+  if (context === undefined) {
+    throw new Error('useApp must be used within an AppProvider');
+  }
   return context;
 };

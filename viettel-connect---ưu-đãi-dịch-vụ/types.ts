@@ -21,6 +21,7 @@ export interface Message {
   id: string;
   role: 'user' | 'model';
   text: string;
+  customData?: any;
 }
 
 export interface ContactFormState {
@@ -45,10 +46,19 @@ export interface Lead {
   service: string;
   timestamp: number;
   status: 'new' | 'contacted' | 'done';
+  note?: string;
 }
 
 export interface ContactConfig {
   hotline: string;
   website: string;
   address: string;
+}
+
+export interface News {
+  id: string;
+  title: string;
+  content: string;
+  image_url?: string;
+  created_at: string;
 }
