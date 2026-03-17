@@ -77,7 +77,18 @@ const AppContent = () => {
         <nav className="sticky top-0 z-40 bg-white shadow-sm border-b border-gray-100">
           <div className="container mx-auto px-4 h-16 flex items-center justify-between">
             <div className="flex items-center gap-2 cursor-pointer" onClick={() => setSelectedNews(null)}>
-              <div className="w-10 h-10 bg-viettel-red rounded-full flex items-center justify-center text-white font-bold text-xl">V</div>
+              <div className="w-10 h-10 bg-viettel-red rounded-full flex items-center justify-center text-white font-bold text-xl overflow-hidden">
+                <img 
+                  src="https://upload.wikimedia.org/wikipedia/commons/thumb/e/e0/Viettel_logo_2021.svg/100px-Viettel_logo_2021.svg.png" 
+                  alt="V" 
+                  className="w-full h-full object-cover scale-150"
+                  referrerPolicy="no-referrer"
+                  onError={(e) => {
+                    (e.target as HTMLImageElement).style.display = 'none';
+                  }}
+                />
+                <span className="absolute">V</span>
+              </div>
               <span className="text-viettel-red font-bold text-2xl tracking-tighter">viettel</span>
             </div>
             <button 
@@ -172,8 +183,17 @@ const AppContent = () => {
         <div className="container mx-auto px-4 h-20 flex items-center justify-between">
           {/* Logo */}
           <div className="flex items-center gap-2 cursor-pointer" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>
-            <div className="w-12 h-12 bg-viettel-red rounded-full flex items-center justify-center text-white font-bold text-2xl">
-              V
+            <div className="w-12 h-12 bg-viettel-red rounded-full flex items-center justify-center text-white font-bold text-2xl overflow-hidden relative">
+              <img 
+                src="https://upload.wikimedia.org/wikipedia/commons/thumb/e/e0/Viettel_logo_2021.svg/100px-Viettel_logo_2021.svg.png" 
+                alt="V" 
+                className="w-full h-full object-cover scale-150"
+                referrerPolicy="no-referrer"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).style.display = 'none';
+                }}
+              />
+              <span className="absolute">V</span>
             </div>
             <div className="flex flex-col leading-none">
               <span className="text-viettel-red font-black text-2xl tracking-tighter">viettel</span>
